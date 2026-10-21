@@ -14,17 +14,29 @@ Git Autopilot skips all of that. You drag your folder in, write a sentence about
 
 It's a single file you download and double-click. Nothing to install, and you don't need Git on your computer.
 
-## What it looks like in practice
+## How it works
 
-1. **Sign in.** If you've ever used GitHub on this computer, Git Autopilot usually finds your account by itself. If not, click **Add account** and follow the three short steps.
-2. **Drop your project folder** into the window (or click **Choose folder**).
-3. **Look at the list.** It shows every file that's new, changed or removed since your last upload. Untick anything you don't want to send.
-4. **Write what you changed**, like "Fixed the typo on the contact page". You can leave it empty and Git Autopilot will write something sensible for you.
-5. **Click Upload to GitHub.**
+When you open Git Autopilot you see **your projects**: every project on your GitHub account, plus the folders you've worked on with this computer. Each one tells you where it stands, for example "everything uploaded", "3 changes to upload" or "only on GitHub".
 
-The first time you upload a folder, Git Autopilot creates the project on GitHub for you (private by default). After that, every upload just adds your newest changes.
+- **Open** a project that's on this computer to see what changed and upload it.
+- **Download** a project that's only on GitHub to get a copy you can work on.
+- **New project** turns any folder into a GitHub project.
 
-Want to add files from somewhere else on your computer? Drag them into the window and they're copied into your project. If a file with the same name already exists, you choose whether to replace it or keep both.
+Inside a project there are three tabs:
+
+| Tab | What it's for |
+| --- | --- |
+| **Changes** | Every file that's new, edited or deleted since your last upload. Untick what you don't want to send. Added something by mistake? Press ↶ next to it to remove it, or to undo your edits to a file. |
+| **All files** | Everything in the project. Delete a file here and it disappears from GitHub at your next upload. |
+| **History** | Every upload you've made, newest first. |
+
+To upload, write a short note about what you changed (or leave it empty and a note is written for you) and press **Upload to GitHub**. The first upload creates the project on GitHub, private unless you untick the box.
+
+Drag files from anywhere into the window and they're copied into the open project. If a file with the same name already exists, you choose whether to replace it or keep both.
+
+When you open a project, Git Autopilot quietly fetches anything that changed on GitHub, so your folder stays current.
+
+The app speaks English and Spanish and picks whichever your computer uses.
 
 ## Download
 
@@ -64,10 +76,13 @@ It isn't encrypted, so treat that file like a password. To sign out, delete it. 
 The Git credential manager (if Git is installed), the GitHub CLI, `~/.git-credentials`, and the `GH_TOKEN` / `GITHUB_TOKEN` environment variables. Keys that GitHub no longer accepts are skipped.
 
 **I deleted the project on GitHub (or uploaded the wrong thing). How do I start over?**
-Open the folder in Git Autopilot. If the GitHub project no longer exists, the app says so and offers **Upload it as a new project**. To move a folder to a different GitHub project on purpose, click the **⋮** button next to **Choose folder** and pick **Upload to a different GitHub project**. Nothing is deleted on your computer or on GitHub.
+Open the project in Git Autopilot. If it no longer exists on GitHub, the app says so and offers **Upload it as a new project**. To send a folder to a different GitHub project on purpose, open the **⋮** menu in the project and pick **Upload to a different GitHub project**. Nothing is deleted on your computer or on GitHub.
 
 **I picked the wrong folder by accident.**
-Click **Choose folder** and pick the right one. If you choose a folder that only contains another folder (which is what unzipping a download often gives you), the app asks whether you meant the folder inside.
+Open the **⋮** menu and choose **Remove from my project list**. The folder itself is left alone. If you pick a folder that only contains another folder (which is what unzipping a download often gives you), the app asks whether you meant the folder inside.
+
+**How do I sign out or switch accounts?**
+Click the person icon at the top right.
 
 **Something went wrong halfway through. Did I lose anything?**
 No. Your files are never deleted by an upload. Fix whatever the message says (usually the internet connection) and click Upload again.
@@ -113,21 +128,20 @@ The Client ID is not a secret; it's safe to ship in the binary.
 
 ### Releasing
 
-Every push and pull request builds Windows and Linux binaries as workflow artifacts. To publish a release, tag a commit:
-
-```sh
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-The workflow builds the `.exe` and the AppImage and attaches them to a new GitHub release.
+Every push to `main` builds the Windows `.exe` and the Linux AppImage and publishes them as a new release (`v1.0.<build number>`), so the Releases page always has the newest version. Pushing a tag such as `v2.0.0` publishes a release under that name instead. Pull requests are built and tested but not released.
 
 ### Project layout
 
 | File | What's in it |
 | --- | --- |
 | `main.go` | Startup |
-| `ui.go` | The window, drag and drop, sign-in dialogs |
+| `ui.go` | The window, accounts and sign-in |
+| `ui_home.go` | The project list |
+| `ui_project.go` | A single project: changes, files, history, upload |
+| `workspace.go` | Downloading, syncing, undo and history |
+| `library.go` | Remembering which folders belong to the user |
+| `i18n.go` | English and Spanish text |
+| `theme.go` | The neutral colour scheme |
 | `project.go` | Opening folders, listing changes, the upload sequence |
 | `merge.go` | Combining GitHub's changes with local ones |
 | `accounts.go` | Finding existing GitHub sign-ins on the machine |

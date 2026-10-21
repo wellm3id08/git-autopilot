@@ -21,7 +21,16 @@ import (
 
 const maxGitHubFileSize = 100 << 20
 
-var errNotSignedIn = errors.New("please sign in to GitHub first")
+var (
+	errNotSignedIn = errors.New("please sign in to GitHub first")
+	errNoRemote    = errors.New("this folder isn't linked to a GitHub project yet")
+)
+
+const (
+	kindNew     = "New"
+	kindChanged = "Changed"
+	kindRemoved = "Removed"
+)
 
 type Change struct {
 	Path string
@@ -45,10 +54,10 @@ func openProject(path string) (*Project, error) {
 		return nil, err
 	}
 	if fi, err := os.Stat(abs); err != nil || !fi.IsDir() {
-		return nil, errors.New("that isn't a folder")
+		return nil, errors.New(T("that isn't a folder"))
 	}
 	if tooBroad(abs) {
-		return nil, errors.New("that folder is too big to be one project; pick the folder that holds just your project")
+		return nil, errors.New(T("that folder is too big to be one project; pick the folder that holds just your project"))
 	}
 	repo, err := git.PlainOpenWithOptions(abs, &git.PlainOpenOptions{DetectDotGit: false})
 	if errors.Is(err, git.ErrRepositoryNotExists) {
@@ -98,12 +107,12 @@ func (p *Project) Changes() ([]Change, error) {
 		if s.Worktree == git.Unmodified && s.Staging == git.Unmodified {
 			continue
 		}
-		kind := "Changed"
+		kind := kindChanged
 		switch {
 		case s.Worktree == git.Deleted || s.Staging == git.Deleted:
-			kind = "Removed"
+			kind = kindRemoved
 		case s.Worktree == git.Untracked || s.Staging == git.Added:
-			kind = "New"
+			kind = kindNew
 		}
 		out = append(out, Change{Path: path, Kind: kind})
 	}
@@ -208,7 +217,7 @@ func (p *Project) checkSizes(paths []string) error {
 	for _, rel := range paths {
 		fi, err := os.Stat(filepath.Join(p.Root, filepath.FromSlash(rel)))
 		if err == nil && fi.Size() > maxGitHubFileSize {
-			return fmt.Errorf("%q is bigger than 100 MB, which GitHub does not accept. Untick it or make it smaller", rel)
+			return fmt.Errorf(T("%q is bigger than 100 MB, which GitHub does not accept. Untick it or make it smaller"), rel)
 		}
 	}
 	return nil
@@ -217,6 +226,27 @@ func (p *Project) checkSizes(paths []string) error {
 // Upload saves the ticked files as a new version and sends it to GitHub. It
 // never discards work: if the GitHub copy changed in a way that can't be
 // combined automatically, the new version goes to a separate branch instead.
+// fetch downloads GitHub's history without touching the folder, except for a
+// brand new folder linked to a project that already has files (adoptRemote).
+func (p *Project) fetch(ctx context.Context, wt *git.Worktree, auth transport.AuthMethod, remoteURL string) error {
+	if remoteURL == "" {
+		return errNoRemote
+	}
+	err := p.repo.FetchContext(ctx, &git.FetchOptions{
+		RemoteName: "origin",
+		RemoteURL:  remoteURL,
+		Auth:       auth,
+		RefSpecs:   []config.RefSpec{"+refs/heads/*:refs/remotes/origin/*"},
+	})
+	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) && !errors.Is(err, transport.ErrEmptyRemoteRepository) {
+		return err
+	}
+	if _, err := p.repo.Head(); errors.Is(err, plumbing.ErrReferenceNotFound) {
+		return p.adoptRemote(wt)
+	}
+	return nil
+}
+
 func (p *Project) Upload(ctx context.Context, acc *Account, paths []string, title, desc string, step func(string)) (*UploadResult, error) {
 	if acc == nil || acc.Token == "" {
 		return nil, errNotSignedIn
@@ -234,29 +264,17 @@ func (p *Project) Upload(ctx context.Context, acc *Account, paths []string, titl
 		return &object.Signature{Name: acc.authorName(), Email: acc.Email, When: time.Now()}
 	}
 
-	step("Checking GitHub for changes…")
-	err = p.repo.FetchContext(ctx, &git.FetchOptions{
-		RemoteName: "origin",
-		RemoteURL:  remoteURL,
-		Auth:       auth,
-		RefSpecs:   []config.RefSpec{"+refs/heads/*:refs/remotes/origin/*"},
-	})
-	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) && !errors.Is(err, transport.ErrEmptyRemoteRepository) {
+	step(T("Checking GitHub for changes…"))
+	if err := p.fetch(ctx, wt, auth, remoteURL); err != nil {
 		return nil, err
-	}
-
-	if _, err := p.repo.Head(); errors.Is(err, plumbing.ErrReferenceNotFound) {
-		if err := p.adoptRemote(wt); err != nil {
-			return nil, err
-		}
 	}
 	branch := p.branch()
 	remoteRef := plumbing.NewRemoteReferenceName("origin", branch.Short())
 
-	step("Saving your changes…")
+	step(T("Saving your changes…"))
 	for _, path := range paths {
 		if _, err := wt.Add(path); err != nil {
-			return nil, fmt.Errorf("could not include %q: %w", path, err)
+			return nil, fmt.Errorf(T("could not include %q: %w"), path, err)
 		}
 	}
 	msg := strings.TrimSpace(title)
@@ -289,7 +307,7 @@ func (p *Project) Upload(ctx context.Context, acc *Account, paths []string, titl
 		}
 	}
 
-	step("Uploading to GitHub…")
+	step(T("Uploading to GitHub…"))
 	err = p.repo.PushContext(ctx, &git.PushOptions{
 		RemoteName: "origin",
 		RemoteURL:  remoteURL,
@@ -356,7 +374,7 @@ func (p *Project) adoptRemote(wt *git.Worktree) error {
 }
 
 func (p *Project) pushSideBranch(ctx context.Context, auth transport.AuthMethod, remoteURL string, h plumbing.Hash, step func(string)) (*UploadResult, error) {
-	step("Uploading your version separately…")
+	step(T("Uploading your version separately…"))
 	name := "my-changes-" + time.Now().Format("2006-01-02-150405")
 	ref := plumbing.NewBranchReferenceName(name)
 	if err := p.repo.Storer.SetReference(plumbing.NewHashReference(ref, h)); err != nil {
@@ -383,16 +401,22 @@ func friendlyError(err error) string {
 	case errors.Is(err, errBadToken),
 		errors.Is(err, transport.ErrAuthenticationRequired),
 		errors.Is(err, transport.ErrAuthorizationFailed):
-		return "GitHub didn't accept your sign-in. Please add your account again."
+		return T("GitHub didn't accept your sign-in. Please add your account again.")
 	case errors.Is(err, transport.ErrRepositoryNotFound):
-		return "GitHub can't find this project, or your account isn't allowed to change it."
+		return T("GitHub can't find this project, or your account isn't allowed to change it.")
+	case errors.Is(err, errNotSignedIn), errors.Is(err, errNoRemote), errors.Is(err, errConflict):
+		return T(capitalize(s))
 	case strings.Contains(s, "no such host"), strings.Contains(s, "dial tcp"),
 		strings.Contains(s, "timeout"), strings.Contains(s, "connection refused"),
 		strings.Contains(s, "network is unreachable"):
-		return "Can't reach GitHub. Check your internet connection and try again."
+		return T("Can't reach GitHub. Check your internet connection and try again.")
 	}
-	if s != "" {
-		s = strings.ToUpper(s[:1]) + s[1:]
+	return capitalize(s)
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
 	}
-	return s
+	return strings.ToUpper(s[:1]) + s[1:]
 }

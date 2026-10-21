@@ -1,0 +1,6 @@
+/git-autopilot
+/git-autopilot.exe
+*.AppImage
+*.syso
+/AppDir/
+/dist/

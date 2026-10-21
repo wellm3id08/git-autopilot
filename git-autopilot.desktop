@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Git Autopilot
+Comment=Upload your projects to GitHub without the command line
+Exec=git-autopilot
+Icon=git-autopilot
+Categories=Development;Utility;
+Terminal=false

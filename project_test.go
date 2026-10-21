@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -223,5 +224,97 @@ func TestRemoteGone(t *testing.T) {
 		if got := p.RemoteGone(context.Background(), acc); got != want {
 			t.Errorf("%s: RemoteGone = %v, want %v", repo, got, want)
 		}
+	}
+}
+
+func TestUndoChange(t *testing.T) {
+	tmp := t.TempDir()
+	remote := filepath.Join(tmp, "remote.git")
+	if _, err := git.PlainInit(remote, true); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(tmp, "site")
+	writeFile(t, filepath.Join(dir, "keep.txt"), "original")
+	writeFile(t, filepath.Join(dir, "gone.txt"), "bye")
+	p, err := openProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetRemote(remote); err != nil {
+		t.Fatal(err)
+	}
+	uploadAll(t, p, "first")
+
+	writeFile(t, filepath.Join(dir, "keep.txt"), "edited")
+	writeFile(t, filepath.Join(dir, "oops.txt"), "added by mistake")
+	if err := os.Remove(filepath.Join(dir, "gone.txt")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"keep.txt", "oops.txt", "gone.txt"} {
+		if err := p.UndoChange(path); err != nil {
+			t.Fatalf("undo %s: %v", path, err)
+		}
+	}
+	if got := readFile(t, filepath.Join(dir, "keep.txt")); got != "original" {
+		t.Fatalf("keep.txt = %q", got)
+	}
+	if got := readFile(t, filepath.Join(dir, "gone.txt")); got != "bye" {
+		t.Fatalf("gone.txt = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "oops.txt")); !os.IsNotExist(err) {
+		t.Fatal("oops.txt should be deleted")
+	}
+	if changes, _ := p.Changes(); len(changes) != 0 {
+		t.Fatalf("expected a clean folder, got %v", changes)
+	}
+}
+
+func TestDownloadAndSync(t *testing.T) {
+	tmp := t.TempDir()
+	remote := filepath.Join(tmp, "remote.git")
+	if _, err := git.PlainInit(remote, true); err != nil {
+		t.Fatal(err)
+	}
+	a := filepath.Join(tmp, "a")
+	writeFile(t, filepath.Join(a, "readme.txt"), "v1")
+	pa, err := openProject(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pa.SetRemote(remote); err != nil {
+		t.Fatal(err)
+	}
+	uploadAll(t, pa, "first")
+
+	acc := &Account{Login: "tester", Token: "unused", Email: "tester@example.com"}
+	pb, err := Download(context.Background(), acc, &ghRepo{Name: "x", CloneURL: remote}, filepath.Join(tmp, "b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, filepath.Join(pb.Root, "readme.txt")); got != "v1" {
+		t.Fatalf("download got %q", got)
+	}
+
+	writeFile(t, filepath.Join(a, "readme.txt"), "v2")
+	uploadAll(t, pa, "second")
+	changed, err := pb.Sync(context.Background(), acc)
+	if err != nil || !changed {
+		t.Fatalf("sync changed=%v err=%v", changed, err)
+	}
+	if got := readFile(t, filepath.Join(pb.Root, "readme.txt")); got != "v2" {
+		t.Fatalf("sync got %q", got)
+	}
+	if versions, _ := pb.History(10); len(versions) != 2 || versions[0].Title != "second" {
+		t.Fatalf("history = %+v", versions)
+	}
+
+	writeFile(t, filepath.Join(a, "readme.txt"), "v3")
+	uploadAll(t, pa, "third")
+	writeFile(t, filepath.Join(pb.Root, "readme.txt"), "local edit")
+	if _, err := pb.Sync(context.Background(), acc); !errors.Is(err, errConflict) {
+		t.Fatalf("expected conflict, got %v", err)
+	}
+	if got := readFile(t, filepath.Join(pb.Root, "readme.txt")); got != "local edit" {
+		t.Fatal("sync overwrote a local edit")
 	}
 }

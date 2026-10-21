@@ -1,0 +1,112 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  LDFLAGS_COMMON: -s -w -X main.githubClientID=${{ vars.GH_OAUTH_CLIENT_ID }}
+  # Tags keep their own name; every push to main gets the next build number.
+  VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.{0}', github.run_number) }}
+
+jobs:
+  linux:
+    # Oldest supported runner, so the AppImage runs on older glibc distros too.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols
+
+      - name: Test
+        run: go vet ./... && go test ./...
+
+      - name: Build
+        run: go build -trimpath -ldflags "$LDFLAGS_COMMON -X main.version=$VERSION" -o git-autopilot .
+
+      - name: Package AppImage
+        run: |
+          mkdir -p AppDir/usr/bin dist
+          cp git-autopilot AppDir/usr/bin/
+          cp packaging/linux/AppRun AppDir/AppRun
+          cp packaging/linux/git-autopilot.desktop AppDir/
+          cp assets/icon.png AppDir/git-autopilot.png
+          ln -s git-autopilot.png AppDir/.DirIcon
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool AppDir "dist/Git-Autopilot-$VERSION-x86_64.AppImage"
+          tar -czf "dist/git-autopilot-$VERSION-linux-amd64.tar.gz" git-autopilot README.md LICENSE
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Make sure a C compiler is available
+        shell: pwsh
+        run: |
+          if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
+            choco install mingw -y --no-progress
+            "C:\ProgramData\mingw64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          }
+
+      - name: Embed icon and manifest
+        run: |
+          go install github.com/tc-hib/go-winres@latest
+          go-winres simply --icon assets/icon.png --manifest gui --product-name "Git Autopilot"
+
+      - name: Build
+        env:
+          CGO_ENABLED: 1
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags "$LDFLAGS_COMMON -H=windowsgui -X main.version=$VERSION" -o "dist/Git-Autopilot-$VERSION-windows-amd64.exe" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+
+  release:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: Git Autopilot ${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          files: dist/*
+          generate_release_notes: true
+          make_latest: true

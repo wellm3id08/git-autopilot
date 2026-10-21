@@ -28,7 +28,7 @@ type Account struct {
 
 func (a *Account) Label() string {
 	if a.Token == "" {
-		return a.Name + " (not signed in)"
+		return a.Name + " " + T("(not signed in)")
 	}
 	if a.Name != "" && a.Name != a.Login {
 		return a.Name + " (@" + a.Login + ")"

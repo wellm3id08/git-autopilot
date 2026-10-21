@@ -31,10 +31,35 @@ type ghUser struct {
 }
 
 type ghRepo struct {
-	Name     string `json:"name"`
-	FullName string `json:"full_name"`
-	HTMLURL  string `json:"html_url"`
-	CloneURL string `json:"clone_url"`
+	Name        string    `json:"name"`
+	FullName    string    `json:"full_name"`
+	HTMLURL     string    `json:"html_url"`
+	CloneURL    string    `json:"clone_url"`
+	Private     bool      `json:"private"`
+	Description string    `json:"description"`
+	PushedAt    time.Time `json:"pushed_at"`
+}
+
+// listRepos returns the projects the account owns or helps with, most recently
+// updated first. Three pages cover everyone but very prolific users.
+func listRepos(ctx context.Context, token string) ([]ghRepo, error) {
+	var all []ghRepo
+	for page := 1; page <= 3; page++ {
+		var batch []ghRepo
+		path := fmt.Sprintf("/user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator&page=%d", page)
+		code, err := githubAPI(ctx, token, "GET", path, nil, &batch)
+		if err != nil {
+			return nil, err
+		}
+		if code != http.StatusOK {
+			return nil, fmt.Errorf(T("GitHub answered with an error (%d). Try again later, or sign in again."), code)
+		}
+		all = append(all, batch...)
+		if len(batch) < 100 {
+			break
+		}
+	}
+	return all, nil
 }
 
 func githubAPI(ctx context.Context, token, method, path string, body any, out any) (int, error) {
@@ -82,7 +107,7 @@ func fetchUser(ctx context.Context, token string) (*ghUser, error) {
 		return nil, err
 	}
 	if code != http.StatusOK {
-		return nil, fmt.Errorf("github answered %d", code)
+		return nil, fmt.Errorf(T("GitHub answered with an error (%d). Try again later, or sign in again."), code)
 	}
 	return &u, nil
 }
@@ -109,11 +134,11 @@ func createOrFindRepo(ctx context.Context, acc *Account, name string, private bo
 		if code == http.StatusOK {
 			return &r, nil
 		}
-		return nil, fmt.Errorf("the name %q can't be used on GitHub, try another one", name)
+		return nil, fmt.Errorf(T("the name %q can't be used on GitHub, try another one"), name)
 	case http.StatusForbidden, http.StatusNotFound:
-		return nil, errors.New("your GitHub key isn't allowed to create projects; make a new key with the \"repo\" box ticked")
+		return nil, errors.New(T("your GitHub key isn't allowed to create projects; make a new key with the \"repo\" box ticked"))
 	}
-	return nil, fmt.Errorf("github answered %d while creating the project", code)
+	return nil, fmt.Errorf(T("GitHub answered with an error (%d). Try again later, or sign in again."), code)
 }
 
 type deviceCode struct {
@@ -149,7 +174,7 @@ func startDeviceLogin(ctx context.Context) (*deviceCode, error) {
 		return nil, err
 	}
 	if dc.DeviceCode == "" {
-		return nil, errors.New("github sign-in is not available right now")
+		return nil, errors.New(T("github sign-in is not available right now"))
 	}
 	return &dc, nil
 }
@@ -186,10 +211,10 @@ func waitDeviceLogin(ctx context.Context, dc *deviceCode) (string, error) {
 		case "slow_down":
 			interval += 5 * time.Second
 		case "access_denied":
-			return "", errors.New("sign-in was cancelled")
+			return "", errors.New(T("sign-in was cancelled"))
 		default:
-			return "", errors.New("the sign-in code expired, please try again")
+			return "", errors.New(T("the sign-in code expired, please try again"))
 		}
 	}
-	return "", errors.New("the sign-in code expired, please try again")
+	return "", errors.New(T("the sign-in code expired, please try again"))
 }
