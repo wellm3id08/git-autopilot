@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon.png" width="96" alt="Git Autopilot icon">
+  <img src="icon.png" width="96" alt="Git Autopilot icon">
 </p>
 
 <h1 align="center">Git Autopilot</h1>
